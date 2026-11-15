@@ -1,0 +1,3 @@
+{
+  "tests/test_env_and_guards.py::test_filter_courses_empty_list_uses_all": true
+}

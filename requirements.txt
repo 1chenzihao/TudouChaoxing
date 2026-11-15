@@ -1,0 +1,22 @@
+# 土豆刷学习通 · 核心依赖（装了这些，主程序就能刷课）
+# 安装方式三选一，任选其一都能装上：
+#   1. 双击「安装环境.bat」（推荐，自动挑最快的国内镜像）
+#   2. 在配置工具里点「一键安装依赖」
+#   3. 手动：pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+#
+# 注意：argparse / json / configparser 这些是 Python 自带的，不要写进来，
+# 从 PyPI 装同名的旧包会污染标准库。
+
+requests
+pyaes
+beautifulsoup4
+lxml>=5.0
+loguru
+fonttools
+openai<3
+httpx>=0.27,<1
+# GitHub Secrets 加密用（配置工具「⑥ 云端部署」页需要）。纯 wheel，装起来很快。
+pynacl
+
+# 验证码识别库 ddddocr 已经移除：代码里没有任何地方 import 它，
+# 而且它锁定的 1.5.6 在 Python 3.12+ 上装不上，留着只会让新人卡在 pip 报错。

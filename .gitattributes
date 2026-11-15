@@ -1,0 +1,9 @@
+# 换行符策略：这些文件必须保持 Windows 的 CRLF，否则从 GitHub 下 ZIP 之后
+# cmd.exe 会把 .bat 里的行读错——表现为「某些行被当成命令执行」、
+# 「if 语句 unexpected at this time」，看着像脚本坏了，其实是换行符。
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# 其余按平台默认
+* text=auto

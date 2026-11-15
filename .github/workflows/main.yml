@@ -1,0 +1,304 @@
+name: 土豆刷学习通 · 云端刷课
+
+# ============================================================
+# 一、三步开跑（照做就行）
+#   1. 加 Secrets：仓库页面 → Settings → Secrets and variables → Actions
+#      → New repository secret
+#        必填  CHX_USER           手机号
+#        必填  CHX_PASS           密码
+#        建议  CHX_LLM_KEY        大模型 key（不填会退化成随机作答）
+#        选填  CHX_LLM_ENDPOINT   默认 https://api.deepseek.com/v1
+#        选填  CHX_LLM_MODEL      默认 deepseek-chat
+#        选填  CHX_COURSE         默认课程 ID（手动触发时课程列表留空才用它）
+#        选填  CHX_DELAY_MIN      每章之间随机停顿的最小秒数（默认 3，测验轮建议 20）
+#        选填  CHX_DELAY_MAX      每章之间随机停顿的最大秒数（默认 9，测验轮建议 60）
+#        选填  CHX_REST_EVERY     连刷几章后长休息（默认 8，填 0 = 关闭长休息）
+#        选填  CHX_REST_MIN       长休息最少几秒（默认 120，测验轮建议 180）
+#        选填  CHX_REST_MAX       长休息最多几秒（默认 300，测验轮建议 420）
+#      账号密码和 key 只放在 Secrets 里，正文任何地方都不出现明文。
+#   2. 触发：仓库 → Actions → 左边选本工作流 → 右边 Run workflow
+#        课程 ID          逗号分隔，留空 = 用 secret CHX_COURSE
+#        每门课章节上限    0 或留空 = 全部（想小步试跑就填 1 或 2）
+#        运行模式          all=视频+测验一起刷 / video=只刷视频 / quiz=只做测验
+#                         （和下面的「只做测验与作业」不冲突：run_mode 填了就以它为准）
+#        只做测验与作业    true 时跳过视频/文档/阅读
+#        只读巡检          true 时只列任务点状态，不刷课不答题不提交
+#        答完是否提交      false = 只保存，你回头自己提交
+#   3. 跑完在本次运行的 Artifacts 里下 chaoxing-run（chaoxing.log / run.log /
+#      scan.log，保留 7 天）；页面上还能直接看「配置摘要」和「答题统计摘录」。
+#
+# 二、额度（新手最容易踩的坑，先看一眼）
+#   * 私有仓库：GitHub 免费 2000 分钟/月，所有 workflow 一起算；
+#     单次运行上限 6 小时，本工作流 timeout 设 350 分钟留余量。
+#     刷一次整场就可能吃掉几百分分钟，一天跑一次一个月必超额度。
+#   * 公开仓库：Actions 分钟数不限（标准 runner 免费），但单次仍是 6 小时上限。
+#   * 所以默认只给「push 到 main」和「手动触发」，schedule 是注释掉的。
+#
+# 三、想定时跑（默认关闭，要用就把下面两行注释去掉）
+#   cron 用 UTC 写，北京时间 = UTC + 8：
+#     '0 16 * * *'  → 北京时间 每天 00:00
+#     '0 0 * * *'   → 北京时间 每天 08:00
+#     '0 14 * * *'  → 北京时间 每天 22:00
+#   提醒：私有仓库定时跑很容易超 2000 分钟免费额度；公开仓库可忽略这条。
+#   本仓库已经打开了两轮定时（见下面 schedule 的两条 cron）：
+#     '0 17 * * *'  UTC 17:00 = 北京 01:00  只刷视频（跑不满也不影响测验轮）
+#     '0 23 * * *'  UTC 23:00 = 北京 07:00  只做测验
+#   两条 cron 用 github.event.schedule 分流，各自算出 RUN_MODE，互不干扰。
+#   单次最长 350 分钟（约 6 小时），跑不完第二天接着刷，进度在服务器上。
+# ============================================================
+
+on:
+  # push 触发已关闭：每次 push 都跑满 6 小时太浪费，只保留定时 + 手动
+  schedule:
+    - cron: '0 17 * * *'   # 北京 01:00，视频轮
+    - cron: '0 23 * * *'   # 北京 07:00，测验轮
+  workflow_dispatch:
+    inputs:
+      run_mode:
+        description: 'all=一起刷 / video=只刷视频 / quiz=只做测验'
+        required: false
+        type: choice
+        default: 'all'
+        options: ['all', 'video', 'quiz']
+      course_list:
+        description: '课程 ID，逗号分隔（留空 = 用 secret CHX_COURSE）'
+        required: false
+        type: string
+        default: ''
+      max_chapters:
+        description: '每门课最多跑几个未完成章节（0 或留空 = 全部）'
+        required: false
+        type: string
+        default: ''
+      solve_only:
+        description: '只做章节测验与作业（跳过视频/文档/阅读）'
+        required: false
+        type: choice
+        default: 'false'
+        options: ['false', 'true']
+      scan_jobs:
+        description: '只读巡检（只列任务点状态，不刷课不答题）'
+        required: false
+        type: choice
+        default: 'false'
+        options: ['false', 'true']
+      submit:
+        description: '答完是否提交（false = 只保存，你自己去提交）'
+        required: false
+        type: choice
+        default: 'true'
+        options: ['false', 'true']
+
+jobs:
+  chaoxing:
+    name: 跑一轮
+    runs-on: ubuntu-latest
+    # 单次最多 350 分钟：GitHub 硬上限 6 小时，留 10 分钟给上传日志和写摘要
+    timeout-minutes: 350
+    # 同一时间只允许跑一个，不打断已经在跑的那个（取消会留下半截的答题状态）
+    concurrency:
+      group: chaoxing-run
+      cancel-in-progress: false
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUNBUFFERED: '1'
+      # inputs 透传给 make_config.py，脚本里 INPUT_* 优先于 Secrets
+      INPUT_RUN_MODE: ${{ inputs.run_mode }}
+      INPUT_COURSE_LIST: ${{ inputs.course_list }}
+      INPUT_MAX_CHAPTERS: ${{ inputs.max_chapters }}
+      INPUT_SOLVE_ONLY: ${{ inputs.solve_only }}
+      INPUT_SCAN_JOBS: ${{ inputs.scan_jobs }}
+      INPUT_SUBMIT: ${{ inputs.submit }}
+
+    steps:
+      - name: 1. 拉代码
+        uses: actions/checkout@v4
+
+      - name: 2. 装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'          # 命中后装依赖从几分钟变几十秒
+
+      - name: 3. 安装依赖
+        # 先走官方 PyPI（Runner 在海外，这条路最快）；万一 PyPI 抽风，
+        # 退回项目自带的 env_setup.py —— 它会按延迟挑国内镜像，一个不通换下一个
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt \
+            || python env_setup.py --install
+
+      - name: 4. 依赖自检
+        # 少装一个包，后面跑十分钟才报错，不如这里先炸
+        run: |
+          python -c "import loguru, requests, bs4, lxml, fontTools; print('deps ok')"
+
+      - name: 5. 生成配置（账号密码从 Secrets 读，用脚本落盘，不打日志）
+        # 不用 heredoc 直接写，避免密码被 Actions 日志回显
+        env:
+          CHX_USER: ${{ secrets.CHX_USER }}
+          CHX_PASS: ${{ secrets.CHX_PASS }}
+          CHX_COURSE: ${{ secrets.CHX_COURSE }}
+          CHX_LLM_KEY: ${{ secrets.CHX_LLM_KEY }}
+          CHX_LLM_ENDPOINT: ${{ secrets.CHX_LLM_ENDPOINT }}
+          CHX_LLM_MODEL: ${{ secrets.CHX_LLM_MODEL }}
+          # 章节间隔秒数（可选）：没配就用 make_config.py 里的默认 3 / 9
+          CHX_DELAY_MIN: ${{ secrets.CHX_DELAY_MIN }}
+          CHX_DELAY_MAX: ${{ secrets.CHX_DELAY_MAX }}
+          # 长休息（防风控，可选）：每 CHX_REST_EVERY 章停 CHX_REST_MIN~CHX_REST_MAX 秒
+          CHX_REST_EVERY: ${{ secrets.CHX_REST_EVERY }}
+          CHX_REST_MIN: ${{ secrets.CHX_REST_MIN }}
+          CHX_REST_MAX: ${{ secrets.CHX_REST_MAX }}
+        run: |
+          python .github/workflows/make_config.py
+
+      - name: 6. 计算本次模式（all / video / quiz）
+        # 定时触发时没有 inputs，靠 github.event.schedule 认出是哪条 cron：
+        #   '0 17 * * *' = 北京 01:00 → 视频轮；'0 23 * * *' = 北京 07:00 → 测验轮
+        # 手动触发时用 inputs.run_mode（默认 all）
+        env:
+          SCHEDULE_CRON: ${{ github.event.schedule }}
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "schedule" ]; then
+            case "${SCHEDULE_CRON}" in
+              '0 17 * * *') RUN_MODE=video ;;
+              '0 23 * * *') RUN_MODE=quiz ;;
+              *)            RUN_MODE=all ;;
+            esac
+            echo "定时触发（cron: ${SCHEDULE_CRON}）-> 本次模式：${RUN_MODE}"
+          else
+            RUN_MODE="${INPUT_RUN_MODE:-all}"
+            echo "手动触发（inputs.run_mode: ${RUN_MODE}）"
+          fi
+          case "${RUN_MODE}" in
+            all|video|quiz) ;;
+            *) echo "run_mode 收到不认识的值：${RUN_MODE}，按 all 处理"; RUN_MODE=all ;;
+          esac
+          echo "RUN_MODE=${RUN_MODE}" >> "$GITHUB_ENV"
+
+      - name: 6.2 写摘要 · 本次配置
+        env:
+          CHX_COURSE: ${{ secrets.CHX_COURSE }}
+          CHX_LLM_KEY: ${{ secrets.CHX_LLM_KEY }}
+          CHX_LLM_ENDPOINT: ${{ secrets.CHX_LLM_ENDPOINT }}
+          CHX_LLM_MODEL: ${{ secrets.CHX_LLM_MODEL }}
+        run: |
+          # inputs 优先：手动填了课程就用它，否则退到 secret CHX_COURSE
+          if [ -n "${INPUT_COURSE_LIST}" ]; then
+            COURSE="${INPUT_COURSE_LIST}"
+            COURSE_FROM="手动触发的课程列表"
+          elif [ -n "${CHX_COURSE}" ]; then
+            COURSE="${CHX_COURSE}"
+            COURSE_FROM="secret CHX_COURSE"
+          else
+            COURSE="（未指定，程序会列出全部课程）"
+            COURSE_FROM="都没填"
+          fi
+          MAX_CH="${INPUT_MAX_CHAPTERS:-0}"
+          SOLVE="${INPUT_SOLVE_ONLY:-false}"
+          SCAN="${INPUT_SCAN_JOBS:-false}"
+          SUBMIT="${INPUT_SUBMIT:-true}"
+          MODEL="${CHX_LLM_MODEL:-deepseek-chat}"
+          ENDPOINT="${CHX_LLM_ENDPOINT:-https://api.deepseek.com/v1}"
+          if [ -n "${CHX_LLM_KEY}" ]; then
+            KEY_STATE="已配置"
+          else
+            KEY_STATE="未配置（会退化成随机作答，正确率不保证）"
+          fi
+          {
+            echo "## 本次配置摘要"
+            echo ""
+            echo "| 项目 | 值 |"
+            echo "| --- | --- |"
+            echo "| 课程 | ${COURSE}（来源：${COURSE_FROM}） |"
+            echo "| 本次模式 | ${RUN_MODE}（all=一起刷 / video=只刷视频 / quiz=只做测验） |"
+            echo "| 每门课章节上限 | ${MAX_CH}（0 或空 = 全部） |"
+            echo "| 只做测验与作业 | ${SOLVE} |"
+            echo "| 只读巡检（不刷课不答题） | ${SCAN} |"
+            echo "| 答完是否提交 | ${SUBMIT} |"
+            echo "| 大模型 | ${MODEL} @ ${ENDPOINT} |"
+            echo "| 大模型 key | ${KEY_STATE} |"
+            echo "| 触发方式 | ${GITHUB_EVENT_NAME} |"
+            echo ""
+            echo "> 摘要只写配置项，密码和 key 一律不打印。"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 6.5 恢复重试清单（跨运行保留）
+        uses: actions/cache@v4
+        with:
+          path: retry_pending.json
+          key: retry-pending-${{ github.run_id }}
+          restore-keys: |
+            retry-pending-
+
+      - name: 7. 运行（巡检 / 刷课）
+        run: |
+          # pipefail：python 挂了也要让这一步标红，别让 tee 把退出码吃掉
+          set -o pipefail
+          echo "开始时间：$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          # 本次模式由「6. 计算本次模式」算好（all / video / quiz）
+          case "${RUN_MODE}" in
+            video) MODE_FLAG="--video-only" ;;
+            quiz)  MODE_FLAG="--solve-only" ;;
+            *)
+              # run_mode=all 时，旧参数 solve_only 仍然算数，别让人填了没反应
+              if [ "${INPUT_SOLVE_ONLY}" = "true" ]; then
+                MODE_FLAG="--solve-only"
+                echo ">>> run_mode=all 但 solve_only=true，按只做测验处理"
+              else
+                MODE_FLAG=""
+              fi
+              ;;
+          esac
+          if [ "${INPUT_SCAN_JOBS}" = "true" ]; then
+            echo ">>> 模式：只读巡检（--scan-jobs），不发任何学习或提交请求"
+            python main.py -c config.ini --scan-jobs 2>&1 | tee scan.log
+          else
+            echo ">>> 模式：${RUN_MODE}（附加参数：${MODE_FLAG:-无，视频+测验一起刷}）"
+            python main.py -c config.ini ${MODE_FLAG} 2>&1 | tee run.log
+          fi
+
+      - name: 8. 上传日志（保留 7 天）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaoxing-run
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            chaoxing.log
+            run.log
+            scan.log
+
+      - name: 9. 写摘要 · 答题统计摘录
+        if: always()
+        run: |
+          if [ "${INPUT_SCAN_JOBS}" = "true" ]; then
+            LOG=scan.log
+          else
+            LOG=run.log
+          fi
+          {
+            echo "## 答题统计摘录"
+            echo ""
+            echo "| 项目 | 值 |"
+            echo "| --- | --- |"
+            echo "| 运行结论 | ${{ job.status }} |"
+            echo "| 摘录来源 | ${LOG} |"
+            echo "| 完整日志 | Actions 页面底部的 artifact chaoxing-run（保留 7 天） |"
+            echo ""
+            if [ -f "${LOG}" ]; then
+              EXCERPT="$(grep -E '答题统计|覆盖率|大模型解题统计' "${LOG}" | tail -n 20 || true)"
+              if [ -n "${EXCERPT}" ]; then
+                echo '```text'
+                printf '%s\n' "${EXCERPT}"
+                echo '```'
+              else
+                echo "日志 ${LOG} 里没有统计行：本次可能没走到答题（比如只读巡检），或者中途退出了。"
+              fi
+            else
+              echo "没有生成 ${LOG}：运行那一步可能没起来，先看上面失败步骤的日志。"
+            fi
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
