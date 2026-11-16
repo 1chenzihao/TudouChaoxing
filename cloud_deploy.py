@@ -15,6 +15,7 @@ pynacl 没装时不会崩，只是"上传 Secrets"这一步会明确告诉你缺
 import base64
 import json
 import os
+import time
 
 import requests
 
@@ -40,6 +41,92 @@ HINT_401 = "Token 无效、过期，或者复制时少了字符。重新生成�
 HINT_404 = "找不到这个仓库。核对两件事：用户名/仓库名拼对了吗、Token 有没有勾 repo 权限。"
 HINT_403 = ("权限不够。生成 Token 时要把 repo 和 workflow 这两个都勾上；"
             "如果已经勾了，可能是短时间内请求太多，等一分钟再来。")
+
+
+# ---------------- 一键登录（OAuth Device Flow） ----------------
+# 为什么用它：Personal Access Token 的路径太深（Settings → Developer settings →
+# Tokens (classic) → Generate → 勾 scope → 复制），新手十个有八个卡在这。
+# Device Flow 只要"点一下 → 浏览器输入 6 位码 → 点 Authorize"，没有比这更短的。
+#
+# client_id 是 GitHub CLI 的公开客户端，device flow 本身就是为"没有回调地址的
+# 命令行/桌面工具"设计的；它不携带任何密钥，只用来标识发起方。
+DEVICE_CLIENT_ID = "178c6fc778ccc68e1d6a"
+DEVICE_SCOPE = "repo workflow"
+DEVICE_CODE_URL = "https://github.com/login/device/code"
+DEVICE_TOKEN_URL = "https://github.com/login/oauth/access_token"
+DEVICE_VERIFY_URL = "https://github.com/login/device"
+
+
+class DeviceFlowError(DeployError):
+    """一键登录过程中的错误（过期、被拒绝、网络）"""
+
+
+def device_start(scope=DEVICE_SCOPE, client_id=DEVICE_CLIENT_ID, session=None):
+    """申请一个设备码。返回 dict：user_code / device_code / interval / expires_in / verification_uri"""
+    s = session or requests.Session()
+    try:
+        resp = s.post(DEVICE_CODE_URL, data={"client_id": client_id, "scope": scope},
+                      headers={"Accept": "application/json", "User-Agent": UA}, timeout=TIMEOUT)
+    except requests.exceptions.RequestException as exc:
+        raise DeviceFlowError("连不上 GitHub 授权服务：%s" % str(exc)[:120]) from exc
+    if resp.status_code != 200:
+        raise DeviceFlowError("GitHub 拒绝了登录请求（HTTP %s）" % resp.status_code)
+    data = resp.json()
+    if data.get("error"):
+        raise DeviceFlowError("GitHub 返回错误：%s" % data.get("error_description") or data.get("error"))
+    return {
+        "user_code": data.get("user_code", ""),
+        "device_code": data.get("device_code", ""),
+        "interval": int(data.get("interval") or 5),
+        "expires_in": int(data.get("expires_in") or 900),
+        "verification_uri": data.get("verification_uri") or DEVICE_VERIFY_URL,
+    }
+
+
+def device_poll(device_code, interval=5, expires_in=900, client_id=DEVICE_CLIENT_ID,
+                session=None, should_stop=None, on_tick=None):
+    """等用户在浏览器里点 Authorize。
+
+    GitHub 的规矩：没授权前返回 error=authorization_pending，要按 interval 轮询；
+    轮太快会回 slow_down。这里都处理了，调用方只要等 token 或异常。
+    """
+    s = session or requests.Session()
+    waited = 0
+    step = max(5, int(interval))
+    while waited < int(expires_in):
+        if should_stop and should_stop():
+            raise DeviceFlowError("已取消登录")
+        try:
+            resp = s.post(DEVICE_TOKEN_URL,
+                          data={"client_id": client_id, "device_code": device_code,
+                                "grant_type": "urn:ietf:params:oauth:grant-type:device_code"},
+                          headers={"Accept": "application/json", "User-Agent": UA}, timeout=TIMEOUT)
+        except requests.exceptions.RequestException as exc:
+            raise DeviceFlowError("等待授权时网络断了：%s" % str(exc)[:120]) from exc
+        data = {}
+        try:
+            data = resp.json()
+        except ValueError:
+            pass
+        token = data.get("access_token")
+        if token:
+            return token
+        err = data.get("error") or ""
+        if err == "authorization_pending":
+            pass
+        elif err == "slow_down":
+            step += 5
+            if on_tick:
+                on_tick("请求太频，等久一点…")
+        elif err == "expired_token":
+            raise DeviceFlowError("验证码过期了，重新点一次「一键登录」")
+        elif err == "access_denied":
+            raise DeviceFlowError("你在浏览器里点了取消，所以没登录上")
+        elif err:
+            raise DeviceFlowError("GitHub 返回：%s" % (data.get("error_description") or err))
+        time.sleep(step)
+        waited += step
+    raise DeviceFlowError("等了 %d 分钟还没授权，验证码过期了，重新点一次" % (expires_in // 60))
 
 
 def has_pynacl():

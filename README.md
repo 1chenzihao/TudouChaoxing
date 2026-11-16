@@ -171,8 +171,16 @@ python env_setup.py --download-python           # 只下载并安装 Python 3.12
 | 步骤 | 做什么 | 注意 |
 | --- | --- | --- |
 | 1 | Fork 这个仓库到自己账号下 | 仓库要**公开**，私有库 Actions 只有 2000 分钟/月 |
-| 2 | `github.com/settings/tokens` → Generate new token (classic) | 只需勾 **repo** 和 **workflow** 两个，有效期自己定 |
-| 3 | 打开配置工具，填 ① 账号、② 大模型，再到 ⑥ 页填用户名 / 仓库名 / Token，点「一键部署并开跑」 | 用户名是登录名，不是邮箱 |
+| 2 | 打开配置工具，填 ① 账号、② 大模型 | 这两页原来怎么填就怎么填 |
+| 3 | 到 ⑥ 页点 **「GitHub 一键登录」**，浏览器里点一下 Authorize，回来点 **「一键部署并开跑」** | **不用去后台申请 Token**，登录后用户名和 Token 自动填好 |
+
+**Token 不用手填了。** 以前要进 Settings → Developer settings → Personal access tokens 里点八下、
+还要勾对 scope，新手十个有八个卡在这。现在点「GitHub 一键登录」会弹一个 6 位验证码：
+
+![一键登录](docs/images/gui_login.png)
+
+它自动把码复制到剪贴板并打开授权页，粘贴进去、点 **Authorize**，窗口就自己关了，Token 也填好了。
+整个过程 20 秒，不需要理解什么是 Personal Access Token。
 
 点下去之后工具会自动做完这些：
 

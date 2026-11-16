@@ -402,7 +402,7 @@ class App:
         # ---------- 云端部署 ----------
         tab6 = ttk.Frame(nb)
         nb.add(tab6, text="⑥ 云端部署")
-        ttk.Label(tab6, text="填好三项，点「一键部署并开跑」：账号和 Key 会直接推到你自己的 GitHub 仓库。",
+        ttk.Label(tab6, text="「GitHub 一键登录」→ 浏览器点一下授权 → 「一键部署并开跑」，完事。",
                   style="Hint.TLabel").grid(row=0, column=0, columnspan=3,
                                             sticky="w", padx=10, pady=(12, 2))
 
@@ -412,7 +412,7 @@ class App:
         self.var_gh_token = tk.StringVar(value=_cp.get("token", ""))
         self.add_row(tab6, 1, "GitHub 用户名", self.var_gh_user, "登录名")
         self.add_row(tab6, 2, "仓库名", self.var_gh_repo, "fork 来的同名仓库")
-        self.add_row(tab6, 3, "Token", self.var_gh_token, "勾 repo+workflow", show="*")
+        self.add_row(tab6, 3, "Token", self.var_gh_token, "点下方登录", show="*")
 
         ttk.Label(tab6, text="写入 4 个 Secrets（账号 / 密码 / Key / 课程 ID），值取自 ①② 页",
                   style="Hint.TLabel").grid(row=4, column=0, columnspan=3,
@@ -420,7 +420,8 @@ class App:
 
         rowc = ttk.Frame(tab6)
         rowc.grid(row=5, column=0, columnspan=3, sticky="w", padx=10, pady=(10, 0))
-        ttk.Button(rowc, text="检测仓库", command=self.cloud_check).pack(side="left")
+        ttk.Button(rowc, text="GitHub 一键登录", command=self.cloud_login).pack(side="left")
+        ttk.Button(rowc, text="检测仓库", command=self.cloud_check).pack(side="left", padx=(8, 0))
         ttk.Button(rowc, text="一键部署并开跑", style="Accent.TButton",
                    command=self.cloud_deploy).pack(side="left", padx=8)
         ttk.Button(rowc, text="打开 Actions 页面", command=self.cloud_open).pack(side="left")
@@ -649,6 +650,119 @@ class App:
         return cloud_deploy.GitHubDeploy(owner, repo, token,
                                         log=lambda s="": self.master.after(0, lambda t=s: self._cloud_say(t)))
 
+    # ---------------- 一键登录（Device Flow） ----------------
+
+    def cloud_login(self, on_success=None):
+        """点一下就登录：弹一个窗口显示 6 位码，浏览器授权完自动填 Token。
+
+        比让新手去 Settings → Developer settings → Tokens 里点八下靠谱得多。
+        """
+        if cloud_deploy is None:
+            messagebox.showwarning("缺文件", "仓库里没找到 cloud_deploy.py，从 GitHub 重新下一份完整代码。")
+            return
+        self._login_stop = False
+
+        win = tk.Toplevel(self.master)
+        win.title("用 GitHub 账号登录")
+        win.geometry("560x330")
+        win.resizable(False, False)
+        win.configure(bg=PAPER)
+        try:
+            if os.path.exists(ICON):
+                win.iconbitmap(ICON)
+            win.transient(self.master)
+            win.grab_set()
+        except tk.TclError:
+            pass
+
+        ttk.Label(win, text="第 1 步：复制下面这个码", style="Title.TLabel").pack(anchor="w", padx=20, pady=(18, 2))
+        code_var = tk.StringVar(value="正在向 GitHub 申请…")
+        code_lbl = tk.Label(win, textvariable=code_var, font=("Consolas", 26, "bold"),
+                            bg=CARD, fg=INK, padx=16, pady=10)
+        code_lbl.pack(fill="x", padx=20, pady=(4, 6))
+
+        ttk.Label(win, text="第 2 步：浏览器里粘贴这个码，点 Authorize（授权）",
+                  style="Hint.TLabel").pack(anchor="w", padx=20)
+        state_var = tk.StringVar(value="等二维码就绪…")
+        ttk.Label(win, textvariable=state_var, style="Hint.TLabel",
+                  wraplength=500, justify="left").pack(anchor="w", padx=20, pady=(10, 6))
+
+        roww = ttk.Frame(win)
+        roww.pack(fill="x", padx=20, pady=(4, 0))
+        btn_open = ttk.Button(roww, text="复制并打开浏览器", style="Accent.TButton", state="disabled")
+        btn_open.pack(side="left")
+        ttk.Button(roww, text="取消", command=lambda: (setattr(self, "_login_stop", True), win.destroy())).pack(side="left", padx=8)
+
+        info = {}
+
+        def ui(fn, *a):
+            self.master.after(0, lambda: fn(*a))
+
+        def safe_status(text):
+            try:
+                if win.winfo_exists():
+                    state_var.set(text)
+            except tk.TclError:
+                pass
+
+        def do_open():
+            code = info.get("user_code", "")
+            try:
+                win.clipboard_clear()
+                win.clipboard_append(code)
+            except tk.TclError:
+                pass
+            import webbrowser
+            webbrowser.open(info.get("verification_uri", "https://github.com/login/device"))
+            safe_status("已复制「%s」，浏览器打开了授权页。粘贴进去、点 Authorize 就行。" % code)
+
+        btn_open.config(command=do_open)
+
+        def worker():
+            try:
+                d = cloud_deploy.device_start()
+                info.update(d)
+                ui(code_var.set, d["user_code"])
+                ui(btn_open.config, {"state": "normal"})
+                ui(lambda: do_open())
+                token = cloud_deploy.device_poll(
+                    d["device_code"], interval=d["interval"], expires_in=d["expires_in"],
+                    should_stop=lambda: self._login_stop,
+                    on_tick=lambda s: ui(safe_status, s),
+                )
+                ui(lambda: self._login_success(win, token, on_success))
+            except Exception as exc:  # noqa: BLE001
+                msg = str(exc)
+                ui(safe_status, "失败：" + msg)
+                ui(lambda: None)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _login_success(self, win, token, on_success):
+        try:
+            if win.winfo_exists():
+                win.destroy()
+        except tk.TclError:
+            pass
+        self.var_gh_token.set(token)
+        name = ""
+        try:
+            me = cloud_deploy.GitHubDeploy("", "", token).whoami()
+            name = me.get("login", "")
+        except Exception:  # noqa: BLE001
+            name = ""
+        if name:
+            self.var_gh_user.set(name)
+        if not self.var_gh_repo.get().strip():
+            self.var_gh_repo.set("TudouChaoxing")
+        self._cloud_say("✅ 登录成功：%s（Token 已自动填好，存在本机 .cloud.json）" % (name or "已获取 Token"))
+        self.status.config(text="GitHub 已登录，可以点「一键部署并开跑」",
+                           style="Hint.TLabel", foreground="#1a7f37")
+        if on_success:
+            on_success()
+        else:
+            messagebox.showinfo("登录成功", "已经用 %s 登录了。\n\n用户名和 Token 都自动填好，现在点「一键部署并开跑」就行。" % (name or "你的账号"))
+
     def _cloud_secrets(self):
         """把 ①② 页的值组装成要上传的 Secrets —— 用户不用在两处重复填"""
         return {
@@ -698,6 +812,12 @@ class App:
         self.status.config(text="部署失败，看下面日志", style="Hint.TLabel", foreground="#b5462f")
 
     def cloud_deploy(self):
+        # 没登录过就直接走登录，登录完自动回到这里继续部署 —— 真正的"一键"
+        if not self.var_gh_token.get().strip():
+            if messagebox.askyesno("还没登录", "还没连 GitHub。现在登录一次？\n\n"
+                                              "点「是」会弹出 6 位验证码，浏览器里授权一下就完事。"):
+                self.cloud_login(on_success=self.cloud_deploy)
+            return
         client = self._cloud_client()
         if client is None:
             return

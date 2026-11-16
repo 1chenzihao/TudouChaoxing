@@ -207,6 +207,102 @@ def test_dispatch_failure_does_not_fail_deploy():
     assert any("手动 Run workflow" in x for x in steps)
 
 
+# ---------------- 一键登录（Device Flow） ----------------
+
+class PostSession:
+    """只实现 post 的假 session，按顺序吐出预设响应"""
+
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.posts = 0
+
+    def post(self, url, data=None, headers=None, timeout=None, **kw):
+        self.posts += 1
+        if not self.responses:
+            return FakeResp(200, {"error": "expired_token"})
+        return self.responses.pop(0)
+
+
+def test_device_start_parses_fields():
+    s = PostSession([FakeResp(200, {
+        "user_code": "WDJB-MJHT", "device_code": "dev123",
+        "verification_uri": "https://github.com/login/device",
+        "interval": 5, "expires_in": 900})])
+    d = cd.device_start(session=s)
+    assert d["user_code"] == "WDJB-MJHT"
+    assert d["device_code"] == "dev123"
+    assert d["interval"] == 5
+    assert d["verification_uri"].endswith("/login/device")
+
+
+def test_device_start_http_error():
+    s = PostSession([FakeResp(500, {"message": "boom"})])
+    with pytest.raises(cd.DeviceFlowError) as exc:
+        cd.device_start(session=s)
+    assert "500" in str(exc.value)
+
+
+def test_device_poll_returns_token_after_pending(monkeypatch):
+    monkeypatch.setattr("time.sleep", lambda *_: None)
+    s = PostSession([
+        FakeResp(200, {"error": "authorization_pending"}),
+        FakeResp(200, {"error": "authorization_pending"}),
+        FakeResp(200, {"access_token": "gho_real_token"}),
+    ])
+    token = cd.device_poll("dev123", interval=5, expires_in=60, session=s)
+    assert token == "gho_real_token"
+    assert s.posts == 3
+
+
+def test_device_poll_slow_down_then_ok(monkeypatch):
+    monkeypatch.setattr("time.sleep", lambda *_: None)
+    ticks = []
+    s = PostSession([
+        FakeResp(200, {"error": "slow_down"}),
+        FakeResp(200, {"access_token": "tok"}),
+    ])
+    token = cd.device_poll("dev", interval=5, expires_in=60, session=s, on_tick=ticks.append)
+    assert token == "tok"
+    assert ticks  # 有提示回调
+
+
+def test_device_poll_expired():
+    import time as _t
+    s = PostSession([FakeResp(200, {"error": "expired_token"})])
+    with pytest.raises(cd.DeviceFlowError) as exc:
+        cd.device_poll("dev", interval=5, expires_in=60, session=s)
+    assert "过期" in str(exc.value)
+
+
+def test_device_poll_denied():
+    s = PostSession([FakeResp(200, {"error": "access_denied"})])
+    with pytest.raises(cd.DeviceFlowError) as exc:
+        cd.device_poll("dev", interval=5, expires_in=60, session=s)
+    assert "取消" in str(exc.value)
+
+
+def test_device_poll_cancel():
+    s = PostSession([FakeResp(200, {"error": "authorization_pending"})] * 5)
+    with pytest.raises(cd.DeviceFlowError) as exc:
+        cd.device_poll("dev", interval=5, expires_in=60, session=s, should_stop=lambda: True)
+    assert "取消" in str(exc.value)
+
+
+def test_device_poll_does_not_sleep_in_tests(monkeypatch):
+    """确认 device_poll 走的是 time.sleep，测试里能被打桩（不然 CI 会真等）"""
+    calls = {"n": 0}
+
+    def fake_sleep(sec):
+        calls["n"] += 1
+        assert sec >= 5
+
+    monkeypatch.setattr("time.sleep", fake_sleep)
+    s = PostSession([FakeResp(200, {"error": "authorization_pending"}),
+                     FakeResp(200, {"access_token": "t"})])
+    assert cd.device_poll("d", interval=5, expires_in=60, session=s) == "t"
+    assert calls["n"] == 1
+
+
 def test_actions_url():
     client = cd.GitHubDeploy("me", "repo", "t")
     assert client.actions_url() == "https://github.com/me/repo/actions"
