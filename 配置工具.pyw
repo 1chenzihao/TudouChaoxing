@@ -367,9 +367,8 @@ class App:
         # ---------- 环境 ----------
         tab5 = ttk.Frame(nb)
         nb.add(tab5, text="⑤ 环境")
-        ttk.Label(tab5, text="装依赖不用连外网：自动挑最快的国内镜像（华为云 / 阿里云 / 清华 / 腾讯），"
-                             "一个不通换下一个，官网打不开也能装上。",
-                  style="Hint.TLabel", wraplength=680, justify="left").grid(
+        ttk.Label(tab5, text="装依赖不用连外网：自动挑最快的国内镜像，一个不通换下一个，官网打不开也能装上。",
+                  style="Hint.TLabel").grid(
             row=0, column=0, columnspan=3, sticky="w", padx=10, pady=(12, 6))
         self.txt_env = tk.Text(tab5, height=9, wrap="none", font=("Consolas", 9),
                                bg=CARD, fg=INK, relief="flat", bd=0, padx=8, pady=6)
@@ -390,6 +389,7 @@ class App:
         ttk.Button(rowb, text="一键安装依赖", style="Accent.TButton",
                    command=self.env_install).pack(side="left", padx=8)
         ttk.Button(rowb, text="下载并安装 Python", command=self.env_python).pack(side="left")
+        ttk.Button(rowb, text="建桌面图标", command=self.env_shortcut).pack(side="left", padx=(8, 0))
 
         self.txt_env_log = tk.Text(tab5, height=5, wrap="word", font=("Consolas", 9),
                                    bg="#241B12", fg="#F6ECD8", insertbackground="#F6ECD8",
@@ -544,6 +544,45 @@ class App:
         self.env_check()
         if ok:
             messagebox.showinfo("装好了", "依赖都装上了。\n现在可以双击「一键配置.bat」填账号，或者直接跑 main.py。")
+
+    def env_shortcut(self):
+        """建桌面快捷方式（等价于双击「初始化快捷方式.bat」，只是不用去找文件）"""
+        script = os.path.join(ROOT, "tools", "make_shortcut.ps1")
+        if not os.path.exists(script):
+            messagebox.showwarning("缺文件", "没找到 tools/make_shortcut.ps1，从 GitHub 重新下一份完整代码。")
+            return
+        if self._env_busy:
+            messagebox.showinfo("稍等", "上一个任务还在跑，等它跑完。")
+            return
+        self._env_busy = True
+        self._env_say("正在创建桌面快捷方式…")
+        self.status.config(text="正在创建桌面快捷方式…", style="Hint.TLabel", foreground=ACCENT)
+
+        def worker():
+            ok = False
+            try:
+                proc = subprocess.Popen(
+                    ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                     "-File", script, "-NoPause"],
+                    cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, encoding="utf-8", errors="ignore", bufsize=1,
+                )
+                for line in proc.stdout:
+                    self.master.after(0, lambda l=line: self._env_say(l.rstrip()))
+                ok = proc.wait() == 0
+            except Exception as exc:  # noqa: BLE001
+                self.master.after(0, lambda e=str(exc): self._env_say("[失败] " + e))
+            self.master.after(0, lambda: self._shortcut_done(ok))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _shortcut_done(self, ok):
+        self._env_busy = False
+        if ok:
+            self.status.config(text="桌面图标已创建", style="Hint.TLabel", foreground="#1a7f37")
+            messagebox.showinfo("好了", "桌面已经有「土豆刷学习通 配置工具」图标了，双击就能开。")
+        else:
+            self.status.config(text="桌面图标没建成，看日志", style="Hint.TLabel", foreground="#b5462f")
 
     def env_python(self):
         """本机没装 Python（或装的是应用商店占位版）时，从国内镜像下安装包"""
