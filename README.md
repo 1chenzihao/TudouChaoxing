@@ -226,9 +226,22 @@ bash update.sh
 脚本干四件事：
 
 1. 把你的 `config.ini`、`cookies.txt`、`cache.json`、`retry_pending.json` 备份到 `_backup_时间戳/`
-2. 拉最新代码（有 `.git` 用 `git pull`，没有就下 ZIP 覆盖）
+2. 拉最新代码
 3. 把备份的数据放回去
 4. 装依赖 + 自检，最后告诉你缺不缺模块
+
+**第 2 步的关键：更新源永远是上游仓库，不看你自己仓库指哪儿。**
+
+| 你的情况 | 它怎么做 |
+| --- | --- |
+| 你就是上游（`git remote` 里是本项目地址） | `git fetch origin` + `reset --hard FETCH_HEAD` |
+| 你 **fork** 了这个仓库 | 自动挂一个 `upstream` 远程，从上游拉，**不动你自己的 origin** |
+| 你下载的是 ZIP、没有 `.git`，或者机器上没装 git | 直接下上游 ZIP 覆盖 |
+
+> 以前这里是 `git reset --hard origin/main`——fork 的人 origin 指自己的仓库，
+> 不手动 Sync fork 就永远停在旧代码，甚至被 reset 回更老的版本。现在这个坑补上了。
+
+更新完它会把版本号打出来，比如 `当前版本: fa628cd fix: ...`，对一下就知道是不是最新。
 
 跑完想回滚：把 `_backup_时间戳/` 里的文件复制回来即可。
 
