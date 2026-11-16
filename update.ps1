@@ -102,7 +102,9 @@ if ((Test-Path ".git") -and $HasGit) {
 
     $f = Run-Git fetch $remoteName $Branch --depth=1 --quiet
     if ($f.Code -eq 0) {
-        $rs = Run-Git reset --hard "$remoteName/$Branch" --quiet
+        # 用 FETCH_HEAD 而不是 origin/main：浅克隆(fetch --depth=1)时 remote-tracking ref
+        # 不一定会更新，直接用刚下载的 FETCH_HEAD 最稳
+        $rs = Run-Git reset --hard FETCH_HEAD --quiet
         if ($rs.Code -eq 0) {
             $r2 = Run-Git rev-parse --short HEAD
             $newRev = "?"
@@ -111,10 +113,10 @@ if ((Test-Path ".git") -and $HasGit) {
             if (-not $isUpstream) { Ok "本地代码已对齐上游；你 fork 的远端没动（云端要更新看最后一行提示）" }
             $updated = $true
         } else {
-            Warn "git reset 失败，改用下载 ZIP"
+            Warn ("git reset 失败，改用下载 ZIP：" + $rs.Out.Trim().Split([char]10)[0])
         }
     } else {
-        Warn "git 拉取失败（网络或证书），改用下载 ZIP"
+        Warn ("git 拉取失败（网络或证书），改用下载 ZIP：" + $f.Out.Trim().Split([char]10)[0])
     }
 }
 
