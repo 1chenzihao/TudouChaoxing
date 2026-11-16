@@ -449,6 +449,12 @@ class Chaoxing:
                 break  # 如果返回为200正常, 则跳出循环
             elif resp.status_code == 403:
                 continue  # 如果出现403无权限报错, 则继续尝试不同的rt参数
+            elif self._looks_blocked(resp):
+                # 202 + 验证码页：这就是风控。之前这里不认 202，返回 ({"isPassed": False}, 202)，
+                # 上层只把 403 当风控，于是同一个任务点被无限重试，
+                # 实测一个 716 秒的视频把 350 分钟预算全吃光（1750 次上报，全是 202）。
+                logger.warning("视频上报被风控拦截(HTTP %s)，停止本次上报" % resp.status_code)
+                return {"isPassed": False}, 403
         if _success:
             try:
                 return resp.json(), 200
@@ -497,6 +503,7 @@ class Chaoxing:
             _playingTime = 0
             logger.info(f"开始任务: {_job['name']}, 总时长: {_duration}秒")
             state = 200
+            _tail_fail = 0
             while not _isFinished:
                 if _isFinished:
                     _playingTime = _duration
@@ -514,6 +521,15 @@ class Chaoxing:
                     break
                 if not _isPassed.get("isPassed") and state == 403:
                     return self.StudyResult.FORBIDDEN
+                # 进度已经顶到片长、服务端还是不认 —— 再来一次也一样，连续两次就退出。
+                # 没有这道闸，任何"上报不被接受"的情况都会变成死循环（202 风控就是活例子）。
+                if _playingTime >= int(_duration):
+                    _tail_fail += 1
+                    if _tail_fail >= 2:
+                        logger.warning(
+                            "已报到片长仍未被服务端接受，放弃该任务点: %s" % _job.get("name", "")
+                        )
+                        return self.StudyResult.ERROR
                 _wait_time = get_random_seconds()
                 if _playingTime + _wait_time >= int(_duration):
                     _wait_time = int(_duration) - _playingTime

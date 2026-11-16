@@ -79,6 +79,51 @@ def test_soft_block_empty_cards_raises(monkeypatch):
         Chaoxing._fetch_job_list_once(_Stub(), "1", "2", "3", "4", job_count=2)
 
 
+def test_video_log_202_counts_as_forbidden():
+    """202 + 验证码页 = 风控。以前这里不认 202，会返回 202 让上层一直重试。"""
+    class _S:
+        def get(self, url, *a, **kw):
+            return _Resp(status=202, text="<p>【9010】操作异常，请输入图片中的验证码</p>")
+
+    class _Stub2(Chaoxing):
+        def __init__(self):
+            pass
+
+        def get_uid(self):
+            return "1"
+
+    payload, state = Chaoxing.video_progress_log(
+        _Stub2(), _S(),
+        {"cpi": "1", "clazzId": "2", "courseId": "3"},
+        {"jobid": "v1", "objectid": "o1", "otherinfo": "nodeId_1-x", "name": "7.1.mp4"},
+        {}, "dt", 716, 0,
+    )
+    assert state == 403
+    assert payload["isPassed"] is False
+
+
+def test_video_log_202_without_text_still_blocked():
+    """有些 202 干脆不给页面内容，也得认出来。"""
+    class _S:
+        def get(self, url, *a, **kw):
+            return _Resp(status=202, text="")
+
+    class _Stub3(Chaoxing):
+        def __init__(self):
+            pass
+
+        def get_uid(self):
+            return "1"
+
+    _payload, state = Chaoxing.video_progress_log(
+        _Stub3(), _S(),
+        {"cpi": "1", "clazzId": "2", "courseId": "3"},
+        {"jobid": "v1", "objectid": "o1", "otherinfo": "nodeId_1-x", "name": "7.1.mp4"},
+        {}, "dt", 716, 0,
+    )
+    assert state == 403
+
+
 def test_empty_chapter_without_jobcount_is_fine(monkeypatch):
     """jobCount 未知（0）时，空卡片仍按"空章节"处理，不能误判风控。"""
 
