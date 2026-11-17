@@ -138,7 +138,7 @@ def write_ini_values(path, section, values):
 
 def parse_workflow():
     """从 main.yml 里读出 cron 和 timeout-minutes"""
-    data = {"cron": "", "minutes": 350, "enabled": False}
+    data = {"cron": "", "minutes": 150, "enabled": False}
     if not os.path.exists(WORKFLOW):
         return data
     text = open(WORKFLOW, "r", encoding="utf-8", errors="ignore").read()
@@ -360,7 +360,7 @@ class App:
         ttk.Label(tab4, text="测验轮晚几小时跑（0 = 只跑一轮，视频和测验一起刷）").grid(row=3, column=0, sticky="w", padx=10, pady=(10, 0))
         ttk.Spinbox(tab4, from_=0, to=23, width=6, textvariable=self.var_gap, format="%02.0f").grid(row=3, column=1, sticky="w", padx=10, pady=(10, 0))
         self.var_minutes = tk.StringVar(value=str(wf["minutes"]))
-        self.add_row(tab4, 4, "每次最多跑多少分钟", self.var_minutes, "上限 360")
+        self.add_row(tab4, 4, "每次最多跑多少分钟", self.var_minutes, "建议 120~180")
         ttk.Label(tab4, text="提示：跑不完不要紧，进度在超星服务器上，第二天接着刷。分两轮（视频轮 + 测验轮）更不容易被风控。",
                   style="Hint.TLabel", wraplength=620, justify="left").grid(row=5, column=0, columnspan=2, sticky="w", padx=10, pady=(6, 0))
 
@@ -957,7 +957,7 @@ class App:
         try:
             hh = int(str(self.var_hour.get()).strip() or 1)
             mm = int(str(self.var_minute.get()).strip() or 0)
-            mins = int(str(self.var_minutes.get()).strip() or 350)
+            mins = int(str(self.var_minutes.get()).strip() or 150)
         except ValueError:
             messagebox.showwarning("填错了", "定时里的小时 / 分钟 / 时长必须是数字，先改一下再保存。")
             return
