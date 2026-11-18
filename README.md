@@ -160,6 +160,31 @@ python env_setup.py --download-python           # 只下载并安装 Python 3.12
 
 ---
 
+## 最快的方式：下载 exe，双击就用（完全不用装 Python）
+
+> **[⬇ 下载 v1.1 云端部署工具](https://github.com/yyzbuhaohe/TudouChaoxing/releases/download/v1.1-cloud/TudouCloudSetup.exe)**（20 MB，单文件，免安装）
+
+![云端一键部署](docs/images/gui_cloud_setup.png)
+
+给"只想让云端跑、不想碰命令行"的人。双击 → 填账号 → 登录 GitHub → 一键部署，四步完事：
+
+1. 先 **Fork** 这个仓库到自己账号下（网页右上角）；
+2. 下载上面那个 exe，双击打开；
+3. 填 ① 学习通账号、② 大模型 Key；
+4. 点 **GitHub 一键登录**（浏览器点一下 Authorize），回来点 **一键部署并开跑**。
+
+它会加密上传 4 个 Secrets、推上定时设置、并触发一次「只跑 1 章」的试水。
+
+**三个提醒**：
+
+- 仓库必须是**公开**的（私有库 Actions 每月只有 2000 分钟）；
+- Fork 完要去自己的 **Actions 页面点一次绿色按钮** `I understand my workflows, go ahead and enable them`，否则定时永远不触发；
+- 这个 exe **只配云端**。要在自己电脑上刷课（`main.py`）还是得装 Python，用仓库里的 `一键配置.bat`。
+
+> GitHub Release 的文件名只能是英文，所以下载下来叫 `TudouCloudSetup.exe`，打开后界面是中文的。
+
+---
+
 ## 别人想用这个脚本跑云端：第⑥页一键部署
 
 把仓库给同学用，最烦的一步是让他自己去 GitHub 后台加 Secrets、改 YAML。现在有 **⑥ 云端部署** 页：
