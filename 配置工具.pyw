@@ -1102,4 +1102,15 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # pythonw.exe 没有控制台，任何异常都只会"窗口闪一下就没了"。
+    # 这里兜一层，把 traceback 落成 gui_error.log，启动器据此提示用户。
+    try:
+        main()
+    except BaseException:
+        import traceback
+        try:
+            with open(os.path.join(ROOT, "gui_error.log"), "w", encoding="utf-8") as fp:
+                fp.write(traceback.format_exc())
+        except OSError:
+            pass
+        raise
