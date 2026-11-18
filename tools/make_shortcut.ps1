@@ -47,14 +47,21 @@ function Find-Python {
         }
     }
     # PATH 没刷新的情况（刚装完 Python）：扫常见安装位置
-    $cands = @(
-        (Join-Path $env:LOCALAPPDATA "Programs\Python\Python312\pythonw.exe"),
-        (Join-Path $env:LOCALAPPDATA "Programs\Python\Python313\pythonw.exe"),
-        (Join-Path $env:LOCALAPPDATA "Programs\Python\Python311\pythonw.exe"),
-        "C:\Python312\pythonw.exe",
-        "C:\Python313\pythonw.exe"
+    # 通配扫描，别写死版本号和盘符：用户可能装在 D 盘、Program Files、或 3.10~3.14 任意版本
+    $pf86 = [Environment]::GetEnvironmentVariable("ProgramFiles(x86)")
+    $patterns = @(
+        (Join-Path $env:LOCALAPPDATA "Programs\Python\Python3*\pythonw.exe"),
+        "C:\Python3*\pythonw.exe",
+        "D:\Python3*\pythonw.exe",
+        "E:\Python3*\pythonw.exe"
     )
-    foreach ($p in $cands) { if (Test-Path $p) { return $p } }
+    if ($env:ProgramFiles) { $patterns += (Join-Path $env:ProgramFiles "Python3*\pythonw.exe") }
+    if ($pf86) { $patterns += (Join-Path $pf86 "Python3*\pythonw.exe") }
+    foreach ($pat in $patterns) {
+        $hit = Get-ChildItem $pat -ErrorAction SilentlyContinue |
+               Sort-Object FullName -Descending | Select-Object -First 1
+        if ($hit) { return $hit.FullName }
+    }
     return $null
 }
 

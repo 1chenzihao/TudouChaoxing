@@ -14,6 +14,16 @@ if not exist "main.py" goto missing_files
 
 rem ---------- 1) 找可用的 Python（跳过 WindowsApps 占位版） ----------
 call :find_py python.exe
+if not defined PYEXE (
+    rem PATH 里没有 python.exe 时，用 py 启动器问出真实路径
+    rem （装 Python 忘了勾 Add to PATH 是最常见的情况，py.exe 在 C:\Windows 下一定有）
+    set "PYTMP=%TEMP%\td_py_path.txt"
+    if exist "%PYTMP%" del "%PYTMP%" >nul 2>nul
+    py -3 -c "import sys;print(sys.executable)" >"%PYTMP%" 2>nul
+    if not errorlevel 1 set /p PYEXE=<"%PYTMP%"
+    if exist "%PYTMP%" del "%PYTMP%" >nul 2>nul
+)
+if defined PYEXE if not exist "%PYEXE%" set "PYEXE="
 if not defined PYEXE goto no_python
 
 rem 同目录下的 pythonw.exe，没有就退回 python.exe（会带一个黑框）
