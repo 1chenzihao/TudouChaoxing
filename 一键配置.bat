@@ -13,17 +13,7 @@ if not exist "配置工具.pyw" goto missing_files
 if not exist "main.py" goto missing_files
 
 rem ---------- 1) 找可用的 Python（跳过 WindowsApps 占位版） ----------
-call :find_py python.exe
-if not defined PYEXE (
-    rem PATH 里没有 python.exe 时，用 py 启动器问出真实路径
-    rem （装 Python 忘了勾 Add to PATH 是最常见的情况，py.exe 在 C:\Windows 下一定有）
-    set "PYTMP=%TEMP%\td_py_path.txt"
-    if exist "%PYTMP%" del "%PYTMP%" >nul 2>nul
-    py -3 -c "import sys;print(sys.executable)" >"%PYTMP%" 2>nul
-    if not errorlevel 1 set /p PYEXE=<"%PYTMP%"
-    if exist "%PYTMP%" del "%PYTMP%" >nul 2>nul
-)
-if defined PYEXE if not exist "%PYEXE%" set "PYEXE="
+call :resolve_python
 if not defined PYEXE goto no_python
 
 rem 同目录下的 pythonw.exe，没有就退回 python.exe（会带一个黑框）
@@ -70,7 +60,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\get_python.ps1"
 if errorlevel 1 goto python_failed
 echo.
 echo   Python installed. Starting the config tool...
-call :find_py python.exe
+rem 刚装完的 Python 不在当前进程的 PATH 里，where 查不到，必须走 resolve_python
+call :resolve_python
 if not defined PYEXE goto python_failed
 set "PYW=%PYEXE:python.exe=pythonw.exe%"
 if not exist "%PYW%" set "PYW=%PYEXE%"
@@ -121,6 +112,28 @@ echo   Send that file to the author, or try 安装环境.bat first.
 echo.
 pause
 exit /b 1
+
+rem :resolve_python - PATH -> py launcher -> common install dirs
+rem 刚装完 Python 时当前进程的 PATH 是旧的，where 一定查不到，
+rem 所以必须有后两级兜底，否则「装好了却说你装失败」。
+:resolve_python
+set "PYEXE="
+call :find_py python.exe
+if defined PYEXE exit /b 0
+
+rem py 启动器（装 Python 时 Include_launcher=1，py.exe 固定在 C:\Windows\py.exe）
+set "PYTMP=%TEMP%\td_py_path.txt"
+if exist "%PYTMP%" del "%PYTMP%" >nul 2>nul
+py -3 -c "import sys;print(sys.executable)" >"%PYTMP%" 2>nul
+if not errorlevel 1 set /p PYEXE=<"%PYTMP%"
+if exist "%PYTMP%" del "%PYTMP%" >nul 2>nul
+if defined PYEXE if not exist "%PYEXE%" set "PYEXE="
+if defined PYEXE exit /b 0
+
+rem 常见安装位置（py 启动器也被拦掉时的最后一招）
+call :find_py pythonw.exe
+if defined PYEXE set "PYEXE=%PYEXE:pythonw.exe=python.exe%"
+exit /b 0
 
 rem :find_py - first match that is NOT the Microsoft Store stub
 :find_py
